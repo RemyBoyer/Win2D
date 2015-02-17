@@ -10,7 +10,7 @@
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-        <canvas:CanvasAnimatedControl x:Name="CanvasControl" Draw="CanvasControl_Draw" Update="CanvasControl_Update" />
+        <canvas:CanvasAnimatedControl x:Name="CanvasControl" CreateResources="CanvasControl_CreateResources" Draw="CanvasControl_Draw" Update="CanvasControl_Update" />
 
     </Grid>
 </Page>

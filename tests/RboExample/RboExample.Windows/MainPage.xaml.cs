@@ -37,16 +37,18 @@ namespace RboExample
         public MainPage()
         {
             this.InitializeComponent();
-            LoadData();
 
             this.CanvasControl.Input.PointerPressed += Input_PointerPressed;
             this.CanvasControl.Input.PointerMoved += Input_PointerMoved;
             this.CanvasControl.Input.PointerReleased += Input_PointerReleased;
         }
 
-        private async void LoadData()
+        private async void CanvasControl_CreateResources(CanvasAnimatedControl sender, CanvasCreateResourcesEventArgs args)
         {
-            trackpoints = (await TcxParser.LoadTcx("activity_368801578.tcx")).ToArray();
+            var loadTask = TcxParser.LoadTcx("activity_368801578.tcx");
+            args.TrackAsyncAction(loadTask.AsAsyncAction());
+
+            trackpoints = (await loadTask).ToArray();
         }
 
         private void CanvasControl_Draw(ICanvasAnimatedControl sender, CanvasAnimatedDrawEventArgs args)
@@ -80,7 +82,8 @@ namespace RboExample
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
             var points = GetPolyLinePoints(absoluteDestination, tp => tp.Coordinate.Elevation, true).ToArray();
-            drawingSession.FillGeometryPathPolyline(points.Select(p => (Microsoft.Graphics.Canvas.Numerics.Vector2)p.Item1).ToArray(), foreground);
+            var geometry = CreatePathGeometry(drawingSession, points.Select(p => p.Item1), true);
+            drawingSession.FillGeometry(geometry, foreground);
 
             DrawTextPosition(drawingSession, size, points, tp => tp.Coordinate.Elevation.ToString("# m"));
         }
@@ -94,7 +97,8 @@ namespace RboExample
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
             var points = GetPolyLinePoints(absoluteDestination, tp => tp.Speed, true).ToArray();
-            drawingSession.FillGeometryPathPolyline(points.Select(p => (Microsoft.Graphics.Canvas.Numerics.Vector2)p.Item1).ToArray(), foreground);
+            var geometry = CreatePathGeometry(drawingSession, points.Select(p => p.Item1), true);
+            drawingSession.FillGeometry(geometry, foreground);
 
             DrawTextPosition(drawingSession, size, points, tp => tp.Speed.ToString("# km/h"));
         }
@@ -108,7 +112,8 @@ namespace RboExample
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
             var points = GetPolyLinePoints(absoluteDestination, tp => tp.Cadence, true).ToArray();
-            drawingSession.FillGeometryPathPolyline(points.Select(p => (Microsoft.Graphics.Canvas.Numerics.Vector2)p.Item1).ToArray(), foreground);
+            var geometry = CreatePathGeometry(drawingSession, points.Select(p => p.Item1), true);
+            drawingSession.FillGeometry(geometry, foreground);
 
             DrawTextPosition(drawingSession, size, points, tp => tp.Cadence.ToString("0 tr/m"));
         }
@@ -174,6 +179,20 @@ namespace RboExample
                 yield return Tuple.Create<Vector2, TrackPoint>(new Vector2((float)destinationRect.Left, (float)destinationRect.Bottom), null);
 
             }
+        }
+
+        private CanvasGeometry CreatePathGeometry(CanvasDrawingSession drawingSession, IEnumerable<Vector2> points, bool close)
+        {
+            var pathBuilder = new CanvasPathBuilder(drawingSession);
+            pathBuilder.BeginFigure(points.First());
+
+            foreach (var point in points.Skip(1))
+                pathBuilder.AddLine(point);
+
+            pathBuilder.EndFigure(close ? CanvasFigureLoop.Closed : CanvasFigureLoop.Open);
+
+            var geometry = CanvasGeometry.CreatePath(pathBuilder);
+            return geometry;
         }
 
         private void DrawTextPosition(CanvasDrawingSession drawingSession, Size size, Tuple<Vector2, TrackPoint>[] points, Func<TrackPoint, string> textGetter)
