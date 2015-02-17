@@ -16,11 +16,7 @@
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
     <Compile Include="$(MSBuildThisFileDirectory)TrackPoint.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)GpxParser.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)TcxParser.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <Content Include="$(MSBuildThisFileDirectory)activity_368801578.gpx" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="$(MSBuildThisFileDirectory)activity_368801578.tcx" />

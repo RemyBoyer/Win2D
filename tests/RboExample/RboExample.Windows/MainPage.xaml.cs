@@ -1,5 +1,6 @@
 ﻿using Geo;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Effects;
 using RBO.Win2D;
 using System;
 using System.Collections.Generic;
@@ -8,9 +9,11 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
 using Windows.UI;
+using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Controls.Primitives;
@@ -30,9 +33,17 @@ namespace RboExample
     {
         private TrackPoint[] trackpoints;
         private double _progression;
-        private readonly TimeSpan _totalDuration = TimeSpan.FromSeconds(30);
+        private readonly TimeSpan _totalDuration = TimeSpan.FromSeconds(120);
         private bool _holdProgression;
         private double? _capturedDesiredX;
+        private Envelope _bounds;
+        private Envelope _mapBounds;
+
+        private IDictionary<TrackPoint, Vector2> _elevationPoints;
+        private IDictionary<TrackPoint, Vector2> _speedPoints;
+        private IDictionary<TrackPoint, Vector2> _candencePoints;
+
+        private Rect _chartsRelativeBounds;
 
         public MainPage()
         {
@@ -43,28 +54,54 @@ namespace RboExample
             this.CanvasControl.Input.PointerReleased += Input_PointerReleased;
         }
 
-        private async void CanvasControl_CreateResources(CanvasAnimatedControl sender, CanvasCreateResourcesEventArgs args)
+        private void CanvasControl_CreateResources(CanvasAnimatedControl sender, CanvasCreateResourcesEventArgs args)
         {
-            var loadTask = TcxParser.LoadTcx("activity_368801578.tcx");
+            var loadTask = Load();
             args.TrackAsyncAction(loadTask.AsAsyncAction());
+        }
 
-            trackpoints = (await loadTask).ToArray();
+        private async Task Load()
+        {
+            trackpoints = (await TcxParser.LoadTcx("activity_368801578.tcx")).ToArray();
+
+            _bounds = new CoordinateSequence(trackpoints.Select(tp => tp.Coordinate)).GetBounds();
+
+            this.MapControl.SetView(new Bing.Maps.LocationRect(
+                new Bing.Maps.Location(_bounds.MaxLat, _bounds.MinLon),
+                new Bing.Maps.Location(_bounds.MinLat, _bounds.MaxLon)
+                ), default(TimeSpan));
+
+            var timer = new DispatcherTimer()
+            {
+                Interval = TimeSpan.FromMilliseconds(50)
+            };
+            timer.Tick += timer_Tick;
+            timer.Start();
+        }
+
+        void timer_Tick(object sender, object e)
+        {
+            var bounds = this.MapControl.Bounds;
+            _mapBounds = new Envelope(bounds.South, bounds.West, bounds.North, bounds.East);
         }
 
         private void CanvasControl_Draw(ICanvasAnimatedControl sender, CanvasAnimatedDrawEventArgs args)
         {
-            DrawElevation(args.DrawingSession, sender.Size, new Rect(0, 0, 1, .25));
-            DrawSpeed(args.DrawingSession, sender.Size, new Rect(0, .25, 1, .25));
-            DrawCandence(args.DrawingSession, sender.Size, new Rect(0, .5, 1, .25));
+            _chartsRelativeBounds = new Rect(.5, 0, .5, 1);
+            DrawElevation(args.DrawingSession, sender.Size, new Rect(.5, 0, .5, .25));
+            DrawSpeed(args.DrawingSession, sender.Size, new Rect(.5, .25, .5, .25));
+            DrawCandence(args.DrawingSession, sender.Size, new Rect(.5, .5, .5, .25));
+            DrawMap(args.DrawingSession, sender.Size, new Rect(0, 0, .5, 1));
 
-            DrawProgression(args.DrawingSession, sender.Size);
+            DrawProgression(args.DrawingSession, sender.Size, _chartsRelativeBounds);
         }
 
         private void CanvasControl_Update(ICanvasAnimatedControl sender, CanvasAnimatedUpdateEventArgs args)
         {
             if (_capturedDesiredX.HasValue)
             {
-                _progression = _capturedDesiredX.Value / sender.Size.Width;
+                var chartsAbsoluteDest = GetAbsoluteDestinationRect(this.CanvasControl.Size, _chartsRelativeBounds);
+                _progression = (_capturedDesiredX.Value - chartsAbsoluteDest.Left) / chartsAbsoluteDest.Width;
             }
 
             if (_holdProgression)
@@ -81,11 +118,9 @@ namespace RboExample
             var foreground = new CanvasSolidColorBrush(drawingSession, Colors.Green);
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
-            var points = GetPolyLinePoints(absoluteDestination, tp => tp.Coordinate.Elevation, true).ToArray();
-            var geometry = CreatePathGeometry(drawingSession, points.Select(p => p.Item1), true);
+            _elevationPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Coordinate.Elevation, true);
+            var geometry = CreatePathGeometry(drawingSession, _elevationPoints.Values, absoluteDestination, true);
             drawingSession.FillGeometry(geometry, foreground);
-
-            DrawTextPosition(drawingSession, size, points, tp => tp.Coordinate.Elevation.ToString("# m"));
         }
 
         private void DrawSpeed(CanvasDrawingSession drawingSession, Size size, Rect destinationRelative)
@@ -96,11 +131,9 @@ namespace RboExample
             var foreground = new CanvasSolidColorBrush(drawingSession, Colors.Blue);
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
-            var points = GetPolyLinePoints(absoluteDestination, tp => tp.Speed, true).ToArray();
-            var geometry = CreatePathGeometry(drawingSession, points.Select(p => p.Item1), true);
+            _speedPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Speed, true);
+            var geometry = CreatePathGeometry(drawingSession, _speedPoints.Values, absoluteDestination, true);
             drawingSession.FillGeometry(geometry, foreground);
-
-            DrawTextPosition(drawingSession, size, points, tp => tp.Speed.ToString("# km/h"));
         }
 
         private void DrawCandence(CanvasDrawingSession drawingSession, Size size, Rect destinationRelative)
@@ -111,16 +144,20 @@ namespace RboExample
             var foreground = new CanvasSolidColorBrush(drawingSession, Colors.Orange);
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
-            var points = GetPolyLinePoints(absoluteDestination, tp => tp.Cadence, true).ToArray();
-            var geometry = CreatePathGeometry(drawingSession, points.Select(p => p.Item1), true);
+            _candencePoints = GetPolyLinePoints(absoluteDestination, tp => tp.Cadence, true);
+            var geometry = CreatePathGeometry(drawingSession, _candencePoints.Values, absoluteDestination, true);
             drawingSession.FillGeometry(geometry, foreground);
-
-            DrawTextPosition(drawingSession, size, points, tp => tp.Cadence.ToString("0 tr/m"));
         }
 
-        private void DrawProgression(CanvasDrawingSession drawingSession, Size size)
+        private void DrawProgression(CanvasDrawingSession drawingSession, Size size, Rect relativeDestination)
         {
-            var x = (float)(_progression * size.Width);
+            var absoluteDestination = GetAbsoluteDestinationRect(size, relativeDestination);
+
+            DrawTextPosition(drawingSession, size, _chartsRelativeBounds, _elevationPoints, tp => tp.Coordinate.Elevation.ToString("# m"));
+            DrawTextPosition(drawingSession, size, _chartsRelativeBounds, _speedPoints, tp => tp.Speed.ToString("# km/h"));
+            DrawTextPosition(drawingSession, size, _chartsRelativeBounds, _candencePoints, tp => tp.Cadence.ToString("0 tr/m"));
+
+            var x = (float)(absoluteDestination.Left + _progression * absoluteDestination.Width);
             drawingSession.DrawLine(new Vector2(x, 0f), new Vector2(x, (float)size.Height), Colors.White, 2);
 
             // Distance
@@ -132,7 +169,108 @@ namespace RboExample
             var position = new Vector2(x + 10, 0);
 
             drawingSession.DrawText(distanceKm.ToString("#.## km"), position, whiteBrush, new CanvasTextFormat());
+        }
 
+        private void DrawMap(CanvasDrawingSession drawingSession, Size size, Rect destinationRelative)
+        {
+            if (_mapBounds == null)
+                return;
+
+            var destinationAbsolute = GetAbsoluteDestinationRect(size, destinationRelative);
+
+            // Tracé sur la carte 
+            var mapGeometry = CreateMapGeometry(drawingSession, destinationAbsolute);
+
+            var renderTarget = new CanvasRenderTarget(drawingSession, (float)destinationAbsolute.Width, (float)destinationAbsolute.Height);
+            using (var session = renderTarget.CreateDrawingSession())
+            {
+                session.DrawGeometry(mapGeometry, Colors.Red, 2);
+            }
+
+            // Transformation pour coller à la carte
+            var transformMatrix = GetMapTransformationMatrix(destinationAbsolute);
+            var transformEffect = new Transform2DEffect()
+            {
+                Source = renderTarget,
+                TransformMatrix = transformMatrix,
+            };
+
+            drawingSession.DrawImage(transformEffect, new Vector2(), destinationAbsolute);
+
+            // Position sur la carte
+            var totalDistance = trackpoints[trackpoints.Length - 1].AccumulatedDistance.SiValue;
+            var targetDistance = _progression * totalDistance;
+            var nearestTrackpoint = this.FindNearest(trackpoints, targetDistance);
+            var centerCoordinates = GetMapPosition(nearestTrackpoint, destinationAbsolute);
+            var transformedCoordinates = MultiplyMatrix(transformMatrix, centerCoordinates);
+            drawingSession.FillCircle(transformedCoordinates, 10, Colors.Black);
+
+        }
+
+        private Vector2 MultiplyMatrix(Matrix3x2 m, Vector2 v)
+        {
+            return new Vector2(
+                v.X * m.M11 + v.Y * m.M21 + m.M31,
+                v.X * m.M12 + v.Y * m.M22 + m.M32
+                );
+        }
+
+        private CanvasGeometry CreateMapGeometry(CanvasDrawingSession drawingSession, Rect destination)
+        {
+            var longitudeWidth = _bounds.MaxLon - _bounds.MinLon;
+            var latitudeHeight = _bounds.MaxLat - _bounds.MinLat;
+
+            var pathBuilder = new CanvasPathBuilder(drawingSession);
+
+            bool first = true;
+
+            foreach (var trackPoint in trackpoints)
+            {
+                var point = GetMapPosition(trackPoint, destination);
+
+                if (first)
+                {
+                    pathBuilder.BeginFigure(point);
+                    first = false;
+                }
+                else
+                    pathBuilder.AddLine(point);
+            }
+
+            pathBuilder.EndFigure(CanvasFigureLoop.Open);
+
+            var geometry = CanvasGeometry.CreatePath(pathBuilder);
+            return geometry;
+        }
+
+        private Vector2 GetMapPosition(TrackPoint trackpoint, Rect destination)
+        {
+            var longitudeWidth = _bounds.MaxLon - _bounds.MinLon;
+            var latitudeHeight = _bounds.MaxLat - _bounds.MinLat;
+
+            var x = destination.Left + (trackpoint.Coordinate.Longitude - _bounds.MinLon) / longitudeWidth * destination.Width;
+            var y = destination.Bottom - (trackpoint.Coordinate.Latitude - _bounds.MinLat) / latitudeHeight * destination.Height;
+
+            var point = new Vector2((float)x, (float)y);
+            return point;
+        }
+
+        private Matrix3x2 GetMapTransformationMatrix(Rect destination)
+        {
+            var srcRect = _bounds;
+            var targetRect = _mapBounds;
+
+            var xRatio = (_bounds.MaxLon - _bounds.MinLon) / (_mapBounds.MaxLon - _mapBounds.MinLon);
+            var yRatio = (_bounds.MaxLat - _bounds.MinLat) / (_mapBounds.MaxLat - _mapBounds.MinLat);
+
+            var longitudeOffsetPerDegree = destination.Width / (_mapBounds.MaxLon - _mapBounds.MinLon);
+            var latitudeOffsetPerDegree = destination.Height / (_mapBounds.MaxLat - _mapBounds.MinLat);
+
+            var xOffset = (_bounds.MinLon - _mapBounds.MinLon) * longitudeOffsetPerDegree;
+            var yOffset = (_mapBounds.MaxLat - _bounds.MaxLat) * latitudeOffsetPerDegree;
+
+            var matrix = Matrix3x2.CreateScale((float)xRatio, (float)yRatio) * Matrix3x2.CreateTranslation((float)xOffset, (float)yOffset);
+            return matrix;
         }
 
         private Rect GetAbsoluteDestinationRect(Size size, Rect relative)
@@ -143,8 +281,10 @@ namespace RboExample
             return absoluteDestination;
         }
 
-        private IEnumerable<Tuple<Vector2, TrackPoint>> GetPolyLinePoints(Rect destinationRect, Func<TrackPoint, double> valueGetter, bool close)
+        private IDictionary<TrackPoint, Vector2> GetPolyLinePoints(Rect destinationRect, Func<TrackPoint, double> valueGetter, bool close)
         {
+            var points = new Dictionary<TrackPoint, Vector2>();
+
             var indexedValues = trackpoints.ToDictionary(tp => tp, tp => valueGetter(tp));
             var maxValue = indexedValues.Values.Max();
 
@@ -167,21 +307,15 @@ namespace RboExample
                 var barHeight = (float)(maxHeight * valueRatio);
                 var barWidth = (float)(widthPerUnit * trackpoint.DistanceFromPrevious.SiValue);
 
-                yield return Tuple.Create(new Vector2(x, y + maxHeight - barHeight), trackpoint);
+                points[trackpoint] = new Vector2(x, y + maxHeight - barHeight);
 
                 x += barWidth;
             }
 
-            if (close)
-            {
-
-                yield return Tuple.Create<Vector2, TrackPoint>(new Vector2((float)destinationRect.Right, (float)destinationRect.Bottom), null);
-                yield return Tuple.Create<Vector2, TrackPoint>(new Vector2((float)destinationRect.Left, (float)destinationRect.Bottom), null);
-
-            }
+            return points;
         }
 
-        private CanvasGeometry CreatePathGeometry(CanvasDrawingSession drawingSession, IEnumerable<Vector2> points, bool close)
+        private CanvasGeometry CreatePathGeometry(CanvasDrawingSession drawingSession, IEnumerable<Vector2> points, Rect destinationRect, bool close)
         {
             var pathBuilder = new CanvasPathBuilder(drawingSession);
             pathBuilder.BeginFigure(points.First());
@@ -189,66 +323,116 @@ namespace RboExample
             foreach (var point in points.Skip(1))
                 pathBuilder.AddLine(point);
 
+            if (close)
+            {
+                pathBuilder.AddLine(new Vector2((float)destinationRect.Right, (float)destinationRect.Bottom));
+                pathBuilder.AddLine(new Vector2((float)destinationRect.Left, (float)destinationRect.Bottom));
+            }
+
             pathBuilder.EndFigure(close ? CanvasFigureLoop.Closed : CanvasFigureLoop.Open);
 
             var geometry = CanvasGeometry.CreatePath(pathBuilder);
             return geometry;
         }
 
-        private void DrawTextPosition(CanvasDrawingSession drawingSession, Size size, Tuple<Vector2, TrackPoint>[] points, Func<TrackPoint, string> textGetter)
+        private void DrawTextPosition(CanvasDrawingSession drawingSession, Size size, Rect relativeDestination, IDictionary<TrackPoint, Vector2> points, Func<TrackPoint, string> textGetter)
         {
-            var x = _progression * size.Width;
+            var dest = GetAbsoluteDestinationRect(size, relativeDestination);
+            var x = dest.Left + _progression * dest.Width;
             var nearestPoint = FindNearest(points, (float)x);
-            if (nearestPoint != null && nearestPoint.Item2 != null)
-            {
-                var whiteBrush = new CanvasSolidColorBrush(drawingSession, Colors.White);
-                drawingSession.FillCircle(nearestPoint.Item1, 3, whiteBrush);
 
-                var position = new Vector2(nearestPoint.Item1.X + 10, nearestPoint.Item1.Y - 10);
+            var trackPoint = nearestPoint.Key;
+            var pointPosition = nearestPoint.Value;
 
-                drawingSession.DrawText(textGetter(nearestPoint.Item2), position, whiteBrush, new CanvasTextFormat());
-            }
+            var whiteBrush = new CanvasSolidColorBrush(drawingSession, Colors.White);
+            drawingSession.FillCircle(pointPosition, 3, whiteBrush);
+
+            var textPosition = new Vector2(pointPosition.X + 10, pointPosition.Y - 10);
+
+            drawingSession.DrawText(textGetter(trackPoint), textPosition, whiteBrush, new CanvasTextFormat());
         }
 
-        private Tuple<Vector2, TrackPoint> FindNearest(Tuple<Vector2, TrackPoint>[] points, float target)
+        private KeyValuePair<TrackPoint, Vector2> FindNearest(IDictionary<TrackPoint, Vector2> points, float target)
         {
-            for (int i = 0; i < points.Length; i++)
+            KeyValuePair<TrackPoint, Vector2>? previousKvp = null;
+
+            foreach (var kvp in points)
             {
-                var current = points[i];
+                var trackPoint = kvp.Key;
+                var position = kvp.Value;
 
-                if (current.Item1.X > target)
+                if (position.X > target)
                 {
-                    var previous = points[i - 1];
+                    if (previousKvp == null)
+                        return kvp;
 
-                    var previousOffset = Math.Abs(previous.Item1.X - target);
-                    var currentOffset = Math.Abs(current.Item1.X - target);
+                    var previousOffset = Math.Abs(previousKvp.Value.Value.X - target);
+                    var currentOffset = Math.Abs(position.X - target);
 
                     if (previousOffset < currentOffset)
-                        return previous;
+                        return previousKvp.Value;
                     else
-                        return current;
+                        return kvp;
                 }
+
+                previousKvp = kvp;
             }
 
-            return null;
+            return previousKvp.Value;
         }
 
-        private void Input_PointerPressed(object sender, Windows.UI.Core.PointerEventArgs args)
+        private TrackPoint FindNearest(IEnumerable<TrackPoint> points, double targetDistance)
         {
-            _holdProgression = true;
-            _capturedDesiredX = args.CurrentPoint.Position.X;
+            TrackPoint previousTrackpoint = null;
+
+            foreach (var point in points)
+            {
+                if (point.AccumulatedDistance.SiValue > targetDistance)
+                {
+                    if (previousTrackpoint == null)
+                        return point;
+
+                    var previousOffset = Math.Abs(previousTrackpoint.AccumulatedDistance.SiValue - targetDistance);
+                    var currentOffset = Math.Abs(point.AccumulatedDistance.SiValue - targetDistance);
+
+                    if (previousOffset < currentOffset)
+                        return previousTrackpoint;
+                    else
+                        return point;
+                }
+
+                previousTrackpoint = point;
+            }
+
+            return previousTrackpoint;
         }
 
-        private void Input_PointerReleased(object sender, Windows.UI.Core.PointerEventArgs args)
+        private void Input_PointerPressed(object sender, PointerEventArgs args)
+        {
+            if (CheckIsInChartsBounds(args.CurrentPoint.Position))
+            {
+                _holdProgression = true;
+                _capturedDesiredX = args.CurrentPoint.Position.X;
+            }
+        }
+
+        private void Input_PointerReleased(object sender, PointerEventArgs args)
         {
             _holdProgression = false;
             _capturedDesiredX = null;
         }
 
-        private void Input_PointerMoved(object sender, Windows.UI.Core.PointerEventArgs args)
+        private void Input_PointerMoved(object sender, PointerEventArgs args)
         {
-            if (args.CurrentPoint.IsInContact)
+            if (CheckIsInChartsBounds(args.CurrentPoint.Position) && args.CurrentPoint.IsInContact)
                 _capturedDesiredX = args.CurrentPoint.Position.X;
+        }
+
+        private bool CheckIsInChartsBounds(Point position)
+        {
+            var absoluteBounds = GetAbsoluteDestinationRect(this.CanvasControl.Size, _chartsRelativeBounds);
+
+            return absoluteBounds.Contains(position);
         }
     }
 }

@@ -6,11 +6,18 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:canvas="using:Microsoft.Graphics.Canvas"
+    xmlns:bm="using:Bing.Maps"
     mc:Ignorable="d">
 
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-        <canvas:CanvasAnimatedControl x:Name="CanvasControl" CreateResources="CanvasControl_CreateResources" Draw="CanvasControl_Draw" Update="CanvasControl_Update" />
+        <bm:Map x:Name="MapControl"></bm:Map>
+
+        <canvas:CanvasAnimatedControl Grid.ColumnSpan="2" x:Name="CanvasControl" CreateResources="CanvasControl_CreateResources" Draw="CanvasControl_Draw" Update="CanvasControl_Update" />
 
     </Grid>
 </Page>
