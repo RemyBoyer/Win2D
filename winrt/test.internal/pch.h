@@ -15,7 +15,7 @@
 #pragma warning(disable: 4100)  // "unreferenced formal parameter"
 #pragma warning(disable: 4702)  // "unreachable code"
 
-#include "targetver.h"
+#include <SDKDDKVer.h>
 
 // Standard C++
 #include <assert.h>
@@ -74,20 +74,22 @@
 #include <CanvasBrush.h>
 #include <CanvasDevice.h>
 #include <CanvasDrawingSession.h>
+#include <CanvasGeometry.h>
 #include <CanvasImageBrush.h>
 #include <CanvasImageSource.h>
 #include <CanvasImageSourceDrawingSessionAdapter.h>
 #include <CanvasLinearGradientBrush.h>
+#include <CanvasPathBuilder.h>
 #include <CanvasRadialGradientBrush.h>
 #include <CanvasRenderTarget.h>
 #include <CanvasSolidColorBrush.h>
 #include <CanvasStrokeStyle.h>
 #include <CanvasSwapChain.h>
-#include <controls\CanvasSwapChainPanel.h>
+#include <CanvasSwapChainPanel.h>
 #include <CanvasTextFormat.h>
 #include <Conversion.h>
 #include <DxgiUtilities.h>
-#include <controls\RecreatableDeviceManager.h>
+#include <RecreatableDeviceManager.h>
 #include <ResourceManager.h>
 #include <ResourceTracker.h>
 #include <ResourceWrapper.h>
@@ -121,8 +123,10 @@ using namespace ABI::Microsoft::Graphics::Canvas::Effects;
 #include "MockD2DGradientStopCollection.h"
 #include "MockD2DLinearGradientBrush.h"
 #include "MockD2DRadialGradientBrush.h"
+#include "MockRecreatableDeviceManager.h"
 #include "MockSurfaceImageSource.h"
 #include "MockSurfaceImageSourceFactory.h"
+#include "MockSuspendingEventArgs.h"
 #include "StubCanvasBrush.h"
 #include "StubCanvasDevice.h"
 #include "StubCanvasDrawingSessionAdapter.h"
