@@ -44,6 +44,10 @@ namespace RboExample
         private IDictionary<TrackPoint, Vector2> _candencePoints;
 
         private Rect _chartsRelativeBounds;
+        private Rect _elevationRelativeBounds;
+        private Rect _speedRelativeBounds;
+        private Rect _candenceRelativeBounds;
+        private Rect _mapRelativeBounds;
 
         public MainPage()
         {
@@ -62,6 +66,12 @@ namespace RboExample
 
         private async Task Load()
         {
+            _chartsRelativeBounds = new Rect(0, .4, 1, .6);
+            _elevationRelativeBounds = new Rect(0, .4, 1, .2);
+            _speedRelativeBounds = new Rect(0, .6, 1, .2);
+            _candenceRelativeBounds = new Rect(0, .8, 1, .2);
+            _mapRelativeBounds = new Rect(0, 0, 1, .4);
+
             trackpoints = (await TcxParser.LoadTcx("activity_368801578.tcx")).ToArray();
 
             _bounds = new CoordinateSequence(trackpoints.Select(tp => tp.Coordinate)).GetBounds();
@@ -87,11 +97,10 @@ namespace RboExample
 
         private void CanvasControl_Draw(ICanvasAnimatedControl sender, CanvasAnimatedDrawEventArgs args)
         {
-            _chartsRelativeBounds = new Rect(.5, 0, .5, 1);
-            DrawElevation(args.DrawingSession, sender.Size, new Rect(.5, 0, .5, .25));
-            DrawSpeed(args.DrawingSession, sender.Size, new Rect(.5, .25, .5, .25));
-            DrawCandence(args.DrawingSession, sender.Size, new Rect(.5, .5, .5, .25));
-            DrawMap(args.DrawingSession, sender.Size, new Rect(0, 0, .5, 1));
+            DrawElevation(args.DrawingSession, sender.Size, _elevationRelativeBounds);
+            DrawSpeed(args.DrawingSession, sender.Size, _speedRelativeBounds);
+            DrawCandence(args.DrawingSession, sender.Size, _candenceRelativeBounds);
+            DrawMap(args.DrawingSession, sender.Size, _mapRelativeBounds);
 
             DrawProgression(args.DrawingSession, sender.Size, _chartsRelativeBounds);
         }
@@ -153,12 +162,12 @@ namespace RboExample
         {
             var absoluteDestination = GetAbsoluteDestinationRect(size, relativeDestination);
 
-            DrawTextPosition(drawingSession, size, _chartsRelativeBounds, _elevationPoints, tp => tp.Coordinate.Elevation.ToString("# m"));
-            DrawTextPosition(drawingSession, size, _chartsRelativeBounds, _speedPoints, tp => tp.Speed.ToString("# km/h"));
-            DrawTextPosition(drawingSession, size, _chartsRelativeBounds, _candencePoints, tp => tp.Cadence.ToString("0 tr/m"));
+            DrawTextPosition(drawingSession, size, relativeDestination, _elevationPoints, tp => tp.Coordinate.Elevation.ToString("# m"));
+            DrawTextPosition(drawingSession, size, relativeDestination, _speedPoints, tp => tp.Speed.ToString("# km/h"));
+            DrawTextPosition(drawingSession, size, relativeDestination, _candencePoints, tp => tp.Cadence.ToString("0 tr/m"));
 
             var x = (float)(absoluteDestination.Left + _progression * absoluteDestination.Width);
-            drawingSession.DrawLine(new Vector2(x, 0f), new Vector2(x, (float)size.Height), Colors.White, 2);
+            drawingSession.DrawLine(new Vector2(x, (float)absoluteDestination.Top), new Vector2(x, (float)absoluteDestination.Bottom), Colors.White, 2);
 
             // Distance
             var totalDistance = trackpoints[trackpoints.Length - 1].AccumulatedDistance.SiValue;
@@ -166,7 +175,7 @@ namespace RboExample
 
             var whiteBrush = new CanvasSolidColorBrush(drawingSession, Colors.White);
 
-            var position = new Vector2(x + 10, 0);
+            var position = new Vector2(x + 10, (float)absoluteDestination.Top);
 
             drawingSession.DrawText(distanceKm.ToString("#.## km"), position, whiteBrush, new CanvasTextFormat());
         }

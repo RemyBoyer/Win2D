@@ -12,12 +12,15 @@
     <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height=".4*" />
+            <RowDefinition Height=".6*" />
+        </Grid.RowDefinitions>
 
         <bm:Map x:Name="MapControl"></bm:Map>
 
-        <canvas:CanvasAnimatedControl Grid.ColumnSpan="2" x:Name="CanvasControl" CreateResources="CanvasControl_CreateResources" Draw="CanvasControl_Draw" Update="CanvasControl_Update" />
+        <canvas:CanvasAnimatedControl Grid.RowSpan="2" x:Name="CanvasControl" CreateResources="CanvasControl_CreateResources" Draw="CanvasControl_Draw" Update="CanvasControl_Update" />
 
     </Grid>
 </Page>
