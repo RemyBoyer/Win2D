@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
@@ -66,8 +67,102 @@ namespace RboExample
                     previousTrackpoint = trackpoint;
                 }
 
+                // Calculer l'inclinaison
+                var averagePointsCount = 11;
+                var analysisIndex = averagePointsCount / 2; // arrondi en dessous
+                var pointsBuffer = new List<TrackPointAggregate>(averagePointsCount + 1);
+                var inclinationsBuffer = new List<double>(averagePointsCount);
+
+                foreach (var point in trackPoints)
+                {
+                    // calculer l'inclinaison
+                    var previousPoint = pointsBuffer.Count > 0 ? pointsBuffer[pointsBuffer.Count - 1] : null;
+                    var distanceGain = previousPoint != null ? point.AccumulatedDistance.SiValue - previousPoint.Distance : 0;
+                    var elevationGain = pointsBuffer.Count > 0 ? point.Coordinate.Elevation - pointsBuffer[pointsBuffer.Count - 1].Elevation : 0;
+
+                    // Aggreger les points lorsque la distance est trop courte car cela peut amener à des valeurs d'inclinaison aberrantes
+                    if (distanceGain < 2)
+                    {
+                        if (previousPoint == null)
+                            pointsBuffer.Add(new TrackPointAggregate(point));
+
+                        pointsBuffer[pointsBuffer.Count - 1].AddTrackPoint(point);
+
+                        continue;
+                    }
+
+                    // Valeurs aberrantes
+                    if (elevationGain > distanceGain)
+                        elevationGain = distanceGain;
+                    if (elevationGain < -distanceGain)
+                        elevationGain = -distanceGain;
+
+                    var sin = elevationGain / distanceGain;
+                    var inclinationAngleRad = Math.Sinh(sin);
+                    var inclinationAngleDegree = inclinationAngleRad * 180 / Math.PI;
+
+                    pointsBuffer.Add(new TrackPointAggregate(point));
+                    inclinationsBuffer.Add(inclinationAngleDegree);
+
+                    if (pointsBuffer.Count > averagePointsCount)
+                    {
+                        pointsBuffer.RemoveAt(0);
+                        inclinationsBuffer.RemoveAt(0);
+                    }
+                    else
+                        continue; // Ne pas calculer d'inclinaison tant qu'on n'a pas assez de points
+
+                    // Faire une moyenne
+                    var avgInclination = inclinationsBuffer.Average();
+
+                    if (avgInclination > 200)
+                        System.Diagnostics.Debugger.Break();
+
+                    pointsBuffer[analysisIndex].SetInclination(avgInclination);
+                }
+
                 return trackPoints;
             }
+        }
+
+
+        private class TrackPointAggregate
+        {
+            private List<TrackPoint> _points = new List<TrackPoint>();
+            private double _elevation;
+            private double _distance;
+
+            public TrackPointAggregate(TrackPoint tp)
+            {
+                _elevation = tp.Coordinate.Elevation;
+                _distance = tp.AccumulatedDistance.SiValue;
+                _points.Add(tp);
+            }
+
+            public void AddTrackPoint(TrackPoint tp)
+            {
+                _points.Add(tp);
+            }
+
+            public double Elevation
+            {
+                get { return _elevation; }
+            }
+
+            public double Distance
+            {
+                get { return _distance; }
+            }
+
+            public void SetInclination(double inclination)
+            {
+                foreach (var tp in _points)
+                {
+                    tp.Inclination = inclination;
+                }
+            }
+
+
         }
     }
 }

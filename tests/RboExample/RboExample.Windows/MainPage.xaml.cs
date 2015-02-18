@@ -74,16 +74,26 @@ namespace RboExample
 
             trackpoints = (await TcxParser.LoadTcx("activity_368801578.tcx")).ToArray();
 
+            int i = 0;
+            trackpoints = trackpoints.Where(tp => i++ % 3 == 0).ToArray();
+
             _bounds = new CoordinateSequence(trackpoints.Select(tp => tp.Coordinate)).GetBounds();
 
+#if WINDOWS_PHONE_APP
+            await this.MapControl.TrySetViewBoundsAsync(new Windows.Devices.Geolocation.GeoboundingBox(
+                  new Windows.Devices.Geolocation.BasicGeoposition { Latitude = _bounds.MaxLat, Longitude = _bounds.MinLon },
+                  new Windows.Devices.Geolocation.BasicGeoposition { Latitude = _bounds.MinLat, Longitude = _bounds.MaxLon }),
+                  new Thickness(10), Windows.UI.Xaml.Controls.Maps.MapAnimationKind.None);
+#else
             this.MapControl.SetView(new Bing.Maps.LocationRect(
                 new Bing.Maps.Location(_bounds.MaxLat, _bounds.MinLon),
                 new Bing.Maps.Location(_bounds.MinLat, _bounds.MaxLon)
                 ), default(TimeSpan));
+#endif
 
             var timer = new DispatcherTimer()
             {
-                Interval = TimeSpan.FromMilliseconds(50)
+                Interval = TimeSpan.FromMilliseconds(200)
             };
             timer.Tick += timer_Tick;
             timer.Start();
@@ -91,8 +101,53 @@ namespace RboExample
 
         void timer_Tick(object sender, object e)
         {
+#if WINDOWS_PHONE_APP
+            Windows.Devices.Geolocation.Geopoint topLeft = null;
+
+            try
+            {
+                this.MapControl.GetLocationFromOffset(new Windows.Foundation.Point(0, 0), out topLeft);
+            }
+            catch
+            {
+                var topOfMap = new Windows.Devices.Geolocation.Geopoint(new Windows.Devices.Geolocation.BasicGeoposition()
+                {
+                    Latitude = 85,
+                    Longitude = 0
+                });
+
+                Windows.Foundation.Point topPoint;
+                this.MapControl.GetOffsetFromLocation(topOfMap, out topPoint);
+                this.MapControl.GetLocationFromOffset(new Windows.Foundation.Point(0, topPoint.Y), out topLeft);
+            }
+
+            Windows.Devices.Geolocation.Geopoint bottomRight = null;
+            try
+            {
+                this.MapControl.GetLocationFromOffset(new Windows.Foundation.Point(this.MapControl.ActualWidth, this.MapControl.ActualHeight), out bottomRight);
+            }
+            catch
+            {
+                var bottomOfMap = new Windows.Devices.Geolocation.Geopoint(new Windows.Devices.Geolocation.BasicGeoposition()
+                {
+                    Latitude = -85,
+                    Longitude = 0
+                });
+
+                Windows.Foundation.Point bottomPoint;
+                this.MapControl.GetOffsetFromLocation(bottomOfMap, out bottomPoint);
+                this.MapControl.GetLocationFromOffset(new Windows.Foundation.Point(0, bottomPoint.Y), out bottomRight);
+            }
+
+            if (topLeft != null && bottomRight != null)
+            {
+                var bounds = new Windows.Devices.Geolocation.GeoboundingBox(topLeft.Position, bottomRight.Position);
+                _mapBounds = new Envelope(bounds.SoutheastCorner.Latitude, bounds.NorthwestCorner.Longitude, bounds.NorthwestCorner.Latitude, bounds.SoutheastCorner.Longitude);
+            }
+#else
             var bounds = this.MapControl.Bounds;
             _mapBounds = new Envelope(bounds.South, bounds.West, bounds.North, bounds.East);
+#endif
         }
 
         private void CanvasControl_Draw(ICanvasAnimatedControl sender, CanvasAnimatedDrawEventArgs args)
@@ -129,7 +184,38 @@ namespace RboExample
 
             _elevationPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Coordinate.Elevation, true);
             var geometry = CreatePathGeometry(drawingSession, _elevationPoints.Values, absoluteDestination, true);
-            drawingSession.FillGeometry(geometry, foreground);
+            drawingSession.FillGeometry(geometry, Colors.Transparent);
+
+            var minInclination = _elevationPoints.Keys.Min(tp => tp.Inclination);
+            var maxInclination = _elevationPoints.Keys.Max(tp => tp.Inclination);
+
+            var previousX = _elevationPoints.First().Value.X;
+
+            foreach (var point in _elevationPoints)
+            {
+                var x = point.Value.X;
+                var y = point.Value.Y;
+
+                var mu = (point.Key.Inclination - minInclination) / (maxInclination - minInclination);
+
+                var color = GenerateColor(1, 1, 1, 1, 2, 2, 128, 127, mu * 2);
+
+                var thickness = x - previousX;
+                drawingSession.DrawLine(new Vector2(x, (float)absoluteDestination.Bottom), new Vector2(x, y), color, thickness * 2);
+
+                previousX = x;
+            }
+
+
+        }
+
+        private Color GenerateColor(double rf, double gf, double bf, double rp, double gp, double bp, double center, double width, double value)
+        {
+            var r = (Math.Sin(rf * value + rp)) * width + center;
+            var g = (Math.Sin(gf * value + gp)) * width + center;
+            var b = (Math.Sin(bf * value + bp)) * width + center;
+
+            return Color.FromArgb(255, (byte)r, (byte)g, (byte)b);
         }
 
         private void DrawSpeed(CanvasDrawingSession drawingSession, Size size, Rect destinationRelative)
@@ -213,7 +299,6 @@ namespace RboExample
             var centerCoordinates = GetMapPosition(nearestTrackpoint, destinationAbsolute);
             var transformedCoordinates = MultiplyMatrix(transformMatrix, centerCoordinates);
             drawingSession.FillCircle(transformedCoordinates, 10, Colors.Black);
-
         }
 
         private Vector2 MultiplyMatrix(Matrix3x2 m, Vector2 v)
@@ -305,6 +390,7 @@ namespace RboExample
             var totalDistance = trackpoints[trackpoints.Length - 1].AccumulatedDistance;
             double widthPerUnit = destinationRect.Width / totalDistance.SiValue;
 
+            TrackPoint previousTrackpoint = trackpoints[0];
             foreach (var trackpoint in trackpoints)
             {
                 var value = indexedValues[trackpoint];
@@ -314,11 +400,12 @@ namespace RboExample
                 valueRatio = Math.Min(1, valueRatio);
 
                 var barHeight = (float)(maxHeight * valueRatio);
-                var barWidth = (float)(widthPerUnit * trackpoint.DistanceFromPrevious.SiValue);
+                var barWidth = (float)(widthPerUnit * (trackpoint.AccumulatedDistance.SiValue - previousTrackpoint.AccumulatedDistance.SiValue));
 
                 points[trackpoint] = new Vector2(x, y + maxHeight - barHeight);
 
                 x += barWidth;
+                previousTrackpoint = trackpoint;
             }
 
             return points;

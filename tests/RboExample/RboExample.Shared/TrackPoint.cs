@@ -22,5 +22,7 @@ namespace RBO.Win2D
 
         public double Speed { get; set; }
 
+        public double Inclination { get; set; }
+
     }
 }

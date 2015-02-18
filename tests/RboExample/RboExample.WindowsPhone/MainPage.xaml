@@ -5,10 +5,22 @@
     xmlns:local="using:RboExample"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    mc:Ignorable="d"
-    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    xmlns:canvas="using:Microsoft.Graphics.Canvas"
+    xmlns:maps="using:Windows.UI.Xaml.Controls.Maps"
+    mc:Ignorable="d">
 
-    <Grid>
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height=".4*" />
+            <RowDefinition Height=".6*" />
+        </Grid.RowDefinitions>
+
+        <maps:MapControl x:Name="MapControl"></maps:MapControl>
+
+        <canvas:CanvasAnimatedControl Grid.RowSpan="2" x:Name="CanvasControl" CreateResources="CanvasControl_CreateResources" Draw="CanvasControl_Draw" Update="CanvasControl_Update" />
 
     </Grid>
 </Page>
