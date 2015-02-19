@@ -183,28 +183,39 @@ namespace RboExample
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
             _elevationPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Coordinate.Elevation, true);
-            var geometry = CreatePathGeometry(drawingSession, _elevationPoints.Values, absoluteDestination, true);
-            drawingSession.FillGeometry(geometry, Colors.Transparent);
 
-            var minInclination = _elevationPoints.Keys.Min(tp => tp.Inclination);
-            var maxInclination = _elevationPoints.Keys.Max(tp => tp.Inclination);
-
-            var previousX = _elevationPoints.First().Value.X;
-
-            foreach (var point in _elevationPoints)
+            var renderTarget = new CanvasRenderTarget(drawingSession, (float)absoluteDestination.Width, (float)absoluteDestination.Height);
+            using (var ds = renderTarget.CreateDrawingSession())
             {
-                var x = point.Value.X;
-                var y = point.Value.Y;
+                var minInclination = _elevationPoints.Keys.Min(tp => tp.Inclination);
+                var maxInclination = _elevationPoints.Keys.Max(tp => tp.Inclination);
 
-                var mu = (point.Key.Inclination - minInclination) / (maxInclination - minInclination);
+                var previousX = _elevationPoints.First().Value.X;
 
-                var color = GenerateColor(1, 1, 1, 1, 2, 2, 128, 127, mu * 2);
+                foreach (var point in _elevationPoints)
+                {
+                    var x = (float)(point.Value.X - absoluteDestination.Left);
+                    var y = (float)(point.Value.Y - absoluteDestination.Top);
 
-                var thickness = x - previousX;
-                drawingSession.DrawLine(new Vector2(x, (float)absoluteDestination.Bottom), new Vector2(x, y), color, thickness * 2);
+                    var mu = (point.Key.Inclination - minInclination) / (maxInclination - minInclination);
 
-                previousX = x;
+                    var color = GenerateColor(1, 1, 1, 1, 2, 2, 128, 127, mu * 2);
+
+                    var thickness = x - previousX;
+                    ds.DrawLine(new Vector2(x, (float)absoluteDestination.Bottom), new Vector2(x, y), color, thickness * 2);
+
+                    previousX = x;
+                }
+
             }
+
+            var convolveEffect = new ConvolveMatrixEffect()
+            {
+                Source = renderTarget,
+                KernelMatrix = new float[] { 0, -1, 0, -1, 5, -1, 0, -1, 0 },
+            };
+
+            drawingSession.DrawImage(renderTarget, (float)absoluteDestination.X, (float)absoluteDestination.Y);
 
 
         }
@@ -445,7 +456,29 @@ namespace RboExample
 
             var textPosition = new Vector2(pointPosition.X + 10, pointPosition.Y - 10);
 
-            drawingSession.DrawText(textGetter(trackPoint), textPosition, whiteBrush, new CanvasTextFormat());
+
+            var renderTarget = new CanvasRenderTarget(drawingSession, 100, 50);
+
+            using (var ds = renderTarget.CreateDrawingSession())
+            {
+                ds.DrawText(textGetter(trackPoint), 0, 0, Colors.White);
+            }
+
+            var shadowEffect = new Transform2DEffect
+            {
+                Source = new ShadowEffect
+                {
+                    Source = renderTarget,
+                    BlurAmount = 2
+                },
+            };
+
+            var compositeEffect = new CompositeEffect
+            {
+                Inputs = { shadowEffect, renderTarget }
+            };
+
+            drawingSession.DrawImage(compositeEffect, textPosition);
         }
 
         private KeyValuePair<TrackPoint, Vector2> FindNearest(IDictionary<TrackPoint, Vector2> points, float target)
