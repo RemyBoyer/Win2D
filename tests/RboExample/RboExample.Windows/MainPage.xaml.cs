@@ -66,11 +66,11 @@ namespace RboExample
 
         private async Task Load()
         {
-            _chartsRelativeBounds = new Rect(0, .4, 1, .6);
-            _elevationRelativeBounds = new Rect(0, .4, 1, .2);
-            _speedRelativeBounds = new Rect(0, .6, 1, .2);
-            _candenceRelativeBounds = new Rect(0, .8, 1, .2);
-            _mapRelativeBounds = new Rect(0, 0, 1, .4);
+            _mapRelativeBounds = new Rect(0, 0, 1, .5);
+            _chartsRelativeBounds = new Rect(0, .5, 1, .5);
+            _elevationRelativeBounds = new Rect(0, .5, 1, .25);
+            _speedRelativeBounds = new Rect(0, .75, 1, .25);
+            _candenceRelativeBounds = new Rect(0, .75, 1, .25);
 
             trackpoints = (await TcxParser.LoadTcx("activity_368801578.tcx")).ToArray();
 
@@ -150,16 +150,6 @@ namespace RboExample
 #endif
         }
 
-        private void CanvasControl_Draw(ICanvasAnimatedControl sender, CanvasAnimatedDrawEventArgs args)
-        {
-            DrawElevation(args.DrawingSession, sender.Size, _elevationRelativeBounds);
-            DrawSpeed(args.DrawingSession, sender.Size, _speedRelativeBounds);
-            DrawCandence(args.DrawingSession, sender.Size, _candenceRelativeBounds);
-            DrawMap(args.DrawingSession, sender.Size, _mapRelativeBounds);
-
-            DrawProgression(args.DrawingSession, sender.Size, _chartsRelativeBounds);
-        }
-
         private void CanvasControl_Update(ICanvasAnimatedControl sender, CanvasAnimatedUpdateEventArgs args)
         {
             if (_capturedDesiredX.HasValue)
@@ -172,6 +162,27 @@ namespace RboExample
                 return;
 
             _progression += (double)args.Timing.ElapsedTime.Ticks / _totalDuration.Ticks;
+
+            UpdateElevation(sender.Size, _elevationRelativeBounds);
+            UpdateSpeed(sender.Size, _speedRelativeBounds);
+            UpdateCadence(sender.Size, _candenceRelativeBounds);
+        }
+
+        private void CanvasControl_Draw(ICanvasAnimatedControl sender, CanvasAnimatedDrawEventArgs args)
+        {
+            DrawElevation(args.DrawingSession, sender.Size, _elevationRelativeBounds);
+            DrawCandence(args.DrawingSession, sender.Size, _candenceRelativeBounds);
+            DrawSpeed(args.DrawingSession, sender.Size, _speedRelativeBounds);
+            DrawMap(args.DrawingSession, sender.Size, _mapRelativeBounds);
+
+            DrawProgression(args.DrawingSession, sender.Size, _chartsRelativeBounds);
+        }
+
+        private void UpdateElevation(Size size, Rect destinationRelative)
+        {
+            var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
+
+            _elevationPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Coordinate.Elevation, true);
         }
 
         private void DrawElevation(CanvasDrawingSession drawingSession, Size size, Rect destinationRelative)
@@ -182,51 +193,71 @@ namespace RboExample
             var foreground = new CanvasSolidColorBrush(drawingSession, Colors.Green);
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
-            _elevationPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Coordinate.Elevation, true);
-
             var renderTarget = new CanvasRenderTarget(drawingSession, (float)absoluteDestination.Width, (float)absoluteDestination.Height);
+
             using (var ds = renderTarget.CreateDrawingSession())
             {
+                var gradientStops = new List<CanvasGradientStop>();
                 var minInclination = _elevationPoints.Keys.Min(tp => tp.Inclination);
                 var maxInclination = _elevationPoints.Keys.Max(tp => tp.Inclination);
 
-                var previousX = _elevationPoints.First().Value.X;
+                var positions = new List<Vector2>();
+
+                var pathBuilder = new CanvasPathBuilder(drawingSession);
+
+                bool first = true;
 
                 foreach (var point in _elevationPoints)
                 {
                     var x = (float)(point.Value.X - absoluteDestination.Left);
                     var y = (float)(point.Value.Y - absoluteDestination.Top);
+                    var position = new Vector2(x, y);
+
+                    if (first)
+                    {
+                        pathBuilder.BeginFigure(position);
+                        first = false;
+                    }
+                    else
+                        pathBuilder.AddLine(position);
+
+                    var relativeX = (float)(x / absoluteDestination.Width);
 
                     var mu = (point.Key.Inclination - minInclination) / (maxInclination - minInclination);
 
-                    var color = GenerateColor(1, 1, 1, 1, 2, 2, 128, 127, mu * 2);
+                    var color = GenerateColor(1, 1, 1, 4, 2, 1, 128, 127, mu * 2);
 
-                    var thickness = x - previousX;
-                    ds.DrawLine(new Vector2(x, (float)absoluteDestination.Bottom), new Vector2(x, y), color, thickness * 2);
-
-                    previousX = x;
+                    gradientStops.Add(new CanvasGradientStop { Color = color, Position = relativeX });
                 }
 
+                pathBuilder.AddLine(new Vector2((float)absoluteDestination.Right, (float)absoluteDestination.Bottom));
+                pathBuilder.AddLine(new Vector2((float)absoluteDestination.Left, (float)absoluteDestination.Bottom));
+                pathBuilder.EndFigure(CanvasFigureLoop.Closed);
+
+                var geometry = CanvasGeometry.CreatePath(pathBuilder);
+                var brush = new CanvasLinearGradientBrush(ds, gradientStops.ToArray(), CanvasEdgeBehavior.Clamp, CanvasAlphaMode.Straight)
+                {
+                    StartPoint = new Vector2((float)absoluteDestination.Left, 0),
+                    EndPoint = new Vector2((float)absoluteDestination.Right, 0),
+                };
+                ds.FillGeometry(geometry, brush);
             }
 
-            var convolveEffect = new ConvolveMatrixEffect()
+
+            var sharpen = new ConvolveMatrixEffect()
             {
                 Source = renderTarget,
-                KernelMatrix = new float[] { 0, -1, 0, -1, 5, -1, 0, -1, 0 },
+                KernelMatrix = new float[] { -1, -1, -1, -1, 9, -1, -1, -1, -1 },
             };
 
+            //drawingSession.DrawImage(sharpen, (float)absoluteDestination.X, (float)absoluteDestination.Y);
             drawingSession.DrawImage(renderTarget, (float)absoluteDestination.X, (float)absoluteDestination.Y);
-
-
         }
 
-        private Color GenerateColor(double rf, double gf, double bf, double rp, double gp, double bp, double center, double width, double value)
+        private void UpdateSpeed(Size size, Rect destinationRelative)
         {
-            var r = (Math.Sin(rf * value + rp)) * width + center;
-            var g = (Math.Sin(gf * value + gp)) * width + center;
-            var b = (Math.Sin(bf * value + bp)) * width + center;
-
-            return Color.FromArgb(255, (byte)r, (byte)g, (byte)b);
+            var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
+            _speedPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Speed, true);
         }
 
         private void DrawSpeed(CanvasDrawingSession drawingSession, Size size, Rect destinationRelative)
@@ -234,12 +265,20 @@ namespace RboExample
             if (trackpoints == null)
                 return;
 
-            var foreground = new CanvasSolidColorBrush(drawingSession, Colors.Blue);
+            var foreground = new CanvasSolidColorBrush(drawingSession, Color.FromArgb(255, 84, 121, 128));
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
-            _speedPoints = GetPolyLinePoints(absoluteDestination, tp => tp.Speed, true);
-            var geometry = CreatePathGeometry(drawingSession, _speedPoints.Values, absoluteDestination, true);
-            drawingSession.FillGeometry(geometry, foreground);
+            var geometry = CreatePathGeometry(drawingSession, _speedPoints.Values, absoluteDestination, false);
+            drawingSession.DrawGeometry(geometry, foreground, 2f, new CanvasStrokeStyle
+                {
+                    LineJoin = CanvasLineJoin.Round,
+                });
+        }
+
+        private void UpdateCadence(Size size, Rect destinationRelative)
+        {
+            var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
+            _candencePoints = GetPolyLinePoints(absoluteDestination, tp => tp.Cadence, true);
         }
 
         private void DrawCandence(CanvasDrawingSession drawingSession, Size size, Rect destinationRelative)
@@ -247,10 +286,9 @@ namespace RboExample
             if (trackpoints == null)
                 return;
 
-            var foreground = new CanvasSolidColorBrush(drawingSession, Colors.Orange);
+            var foreground = new CanvasSolidColorBrush(drawingSession, Color.FromArgb(255, 229, 252, 194));
             var absoluteDestination = GetAbsoluteDestinationRect(size, destinationRelative);
 
-            _candencePoints = GetPolyLinePoints(absoluteDestination, tp => tp.Cadence, true);
             var geometry = CreatePathGeometry(drawingSession, _candencePoints.Values, absoluteDestination, true);
             drawingSession.FillGeometry(geometry, foreground);
         }
@@ -562,6 +600,15 @@ namespace RboExample
             var absoluteBounds = GetAbsoluteDestinationRect(this.CanvasControl.Size, _chartsRelativeBounds);
 
             return absoluteBounds.Contains(position);
+        }
+
+        private Color GenerateColor(double rf, double gf, double bf, double rp, double gp, double bp, double center, double width, double value)
+        {
+            var r = (Math.Sin(rf * value + rp)) * width + center;
+            var g = (Math.Sin(gf * value + gp)) * width + center;
+            var b = (Math.Sin(bf * value + bp)) * width + center;
+
+            return Color.FromArgb(255, (byte)r, (byte)g, (byte)b);
         }
     }
 }
