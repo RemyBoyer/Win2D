@@ -55,6 +55,9 @@ ipch/
 # Git merge backup files
 *.orig
 
+# Nuget
+packages/
+
 # =========================
 # Windows detritus
 # =========================
